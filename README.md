@@ -106,18 +106,6 @@ Run tests:
 pytest
 ```
 
-## Roadmap
-
-- [x] Core API design
-- [x] FSM architecture
-- [x] Database design
-- [ ] Authentication & refresh-token rotation
-- [ ] Redis caching
-- [ ] Celery background jobs
-- [ ] Dashboard analytics
-- [ ] Dockerized deployment
-- [ ] Production deployment
-
 ## Why This Project?
 
 The goal is to demonstrate backend engineering beyond CRUD through **state-machine design, asynchronous database access, caching, background jobs, authentication security, testing, CI, and deployment**.
