@@ -1,3 +1,4 @@
+from datetime import datetime
 import uuid
 
 from sqlalchemy import select
@@ -23,13 +24,59 @@ async def get_application(db: AsyncSession, application_id: uuid.UUID) -> Applic
     result = await db.execute(select(Application).where(Application.id == application_id))
     return result.scalar_one_or_none()
 
+TERMINAL_STATUSES = {
+    ApplicationStatus.REJECTED,
+    ApplicationStatus.WITHDRAWN,
+    ApplicationStatus.GHOSTED,
+}
 
-async def update_application_status(db: AsyncSession,application: Application,target_status: ApplicationStatus,) -> Application:
+async def update_application_status(
+    db: AsyncSession,
+    application: Application,
+    target_status: ApplicationStatus,
+    deadline: datetime | None = None,
+) -> Application:
     current_status = application.current_status
     new_status = transition(current_status, target_status)
     application.current_status = new_status
-    history_entry = StatusHistory(application_id=application.id,from_status=current_status,to_status=new_status,)
+
+    if new_status in TERMINAL_STATUSES:
+        application.deadline = None
+    elif deadline is not None:
+        application.deadline = deadline
+
+    history_entry = StatusHistory(
+        application_id=application.id,
+        from_status=current_status,
+        to_status=new_status,
+    )
     db.add(history_entry)
+    await db.commit()
+    await db.refresh(application)
+    return application
+
+
+async def list_applications_for_user(db: AsyncSession, user_id: uuid.UUID) -> list[Application]:
+    result = await db.execute(select(Application).where(Application.user_id == user_id))
+    return list(result.scalars().all())
+
+
+async def update_application_fields(
+    db: AsyncSession,
+    application: Application,
+    company_name: str | None = None,
+    role_title: str | None = None,
+    deadline: datetime | None = None,
+) -> Application:
+    if company_name is not None:
+        application.company_name = company_name
+
+    if role_title is not None:
+        application.role_title = role_title
+
+    if deadline is not None:
+        application.deadline = deadline
+
     await db.commit()
     await db.refresh(application)
     return application

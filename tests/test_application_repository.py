@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -30,6 +31,7 @@ async def test_create_application(db: AsyncSession, test_user: User):
     assert application.company_name == "Google"
     assert application.role_title == "Software Engineer Intern"
     assert application.current_status == ApplicationStatus.APPLIED
+    assert application.deadline is None
 
     # Assert - Initial StatusHistory
     result = await db.execute(
@@ -142,3 +144,129 @@ async def test_invalid_status_transition(db: AsyncSession, test_user: User):
             application=application,
             target_status=ApplicationStatus.OFFER,
         )
+
+
+@pytest.mark.asyncio
+async def test_status_transition_with_deadline_persists(
+    db: AsyncSession, test_user: User
+):
+    # Arrange
+    application = await create_application(
+        db=db,
+        user_id=test_user.id,
+        company_name="Uber",
+        role_title="Backend Intern",
+    )
+    oa1_deadline = datetime.now(timezone.utc) + timedelta(days=5)
+
+    # Act
+    updated_application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=ApplicationStatus.OA1,
+        deadline=oa1_deadline,
+    )
+
+    # Assert
+    assert updated_application.deadline == oa1_deadline
+
+
+@pytest.mark.asyncio
+async def test_status_transition_without_deadline_leaves_existing_unchanged(
+    db: AsyncSession, test_user: User
+):
+    # Arrange
+    application = await create_application(
+        db=db,
+        user_id=test_user.id,
+        company_name="Uber",
+        role_title="Backend Intern",
+    )
+    oa1_deadline = datetime.now(timezone.utc) + timedelta(days=5)
+    application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=ApplicationStatus.OA1,
+        deadline=oa1_deadline,
+    )
+
+    # Act - transition again without passing a deadline
+    updated_application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=ApplicationStatus.OA2,
+    )
+
+    # Assert - previous deadline is untouched
+    assert updated_application.deadline == oa1_deadline
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    [
+        ApplicationStatus.REJECTED,
+        ApplicationStatus.WITHDRAWN,
+        ApplicationStatus.GHOSTED,
+    ],
+)
+@pytest.mark.asyncio
+async def test_terminal_status_clears_existing_deadline(
+    db: AsyncSession, test_user: User, terminal_status: ApplicationStatus
+):
+    # Arrange
+    application = await create_application(
+        db=db,
+        user_id=test_user.id,
+        company_name="Uber",
+        role_title="Backend Intern",
+    )
+    oa1_deadline = datetime.now(timezone.utc) + timedelta(days=5)
+    application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=ApplicationStatus.OA1,
+        deadline=oa1_deadline,
+    )
+
+    # Act
+    updated_application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=terminal_status,
+    )
+
+    # Assert
+    assert updated_application.deadline is None
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    [
+        ApplicationStatus.REJECTED,
+        ApplicationStatus.WITHDRAWN,
+        ApplicationStatus.GHOSTED,
+    ],
+)
+@pytest.mark.asyncio
+async def test_terminal_status_ignores_passed_deadline(
+    db: AsyncSession, test_user: User, terminal_status: ApplicationStatus
+):
+    # Arrange
+    application = await create_application(
+        db=db,
+        user_id=test_user.id,
+        company_name="Uber",
+        role_title="Backend Intern",
+    )
+    new_deadline = datetime.now(timezone.utc) + timedelta(days=3)
+
+    # Act - pass a deadline alongside a terminal transition
+    updated_application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=terminal_status,
+        deadline=new_deadline,
+    )
+
+    # Assert - terminal clear wins regardless of the passed value
+    assert updated_application.deadline is None

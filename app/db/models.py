@@ -34,6 +34,7 @@ class Application(Base):
         nullable=False,
         default=ApplicationStatus.APPLIED,
     )
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     applied_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
