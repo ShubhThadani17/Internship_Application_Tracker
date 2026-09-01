@@ -44,6 +44,7 @@ async def update_application_status(
         application.deadline = None
     elif deadline is not None:
         application.deadline = deadline
+        application.deadline_notified = False
 
     history_entry = StatusHistory(
         application_id=application.id,
@@ -76,6 +77,7 @@ async def update_application_fields(
 
     if deadline is not None:
         application.deadline = deadline
+        application.deadline_notified = False
 
     await db.commit()
     await db.refresh(application)
