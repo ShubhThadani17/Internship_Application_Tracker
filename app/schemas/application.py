@@ -30,6 +30,7 @@ class ApplicationResponse(BaseModel):
     current_status: ApplicationStatus
     applied_date: datetime
     deadline: datetime | None
+    deadline_notified: bool
     created_at: datetime
     updated_at: datetime
 
