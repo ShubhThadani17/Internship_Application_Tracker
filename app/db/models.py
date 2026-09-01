@@ -1,6 +1,6 @@
 import uuid     #Python's built-in module for generating UUIDs (Universally Unique Identifiers)
 from datetime import datetime, timezone
-from sqlalchemy import ForeignKey, String, Enum as SQLAEnum ,DateTime
+from sqlalchemy import ForeignKey, String, Enum as SQLAEnum ,DateTime, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -35,6 +35,7 @@ class Application(Base):
         default=ApplicationStatus.APPLIED,
     )
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deadline_notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     applied_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
