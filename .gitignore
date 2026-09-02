@@ -1,2 +1,18 @@
-Internship tracker PRD.md
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest cache
+.pytest_cache/
+
+# Virtual environment
 virtual_env/
+
+# Environment variables / secrets
+.env
+
+# IDE
+.vscode/
+
+celerybeat-schedule*
