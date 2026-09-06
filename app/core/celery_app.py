@@ -10,6 +10,7 @@ celery_app = Celery(
     include=[
         "app.tasks.deadline_tasks",
         "app.tasks.notification_tasks",
+        "app.tasks.analytics_tasks",
     ],
 )
 
