@@ -20,6 +20,8 @@ from app.schemas.application import (
     ApplicationStatusUpdate,
 )
 
+from app.tasks.analytics_tasks import recompute_analytics
+
 router = APIRouter()
 
 
@@ -86,4 +88,7 @@ async def update_status_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot transition from {e.current.value} to {e.target.value}",
         )
+
+    recompute_analytics.delay()
+
     return updated
