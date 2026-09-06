@@ -7,6 +7,8 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
 from app.domain.status import ApplicationStatus
 
+from sqlalchemy import JSON
+
 #mapped - SQLAlchemy's modern type-annotation system for ORM attributes.
 #Think of Mapped as telling SQLAlchemy:This Python variable is connected to a database column.
 #mapped_column - column definition with its database rules.
@@ -54,3 +56,11 @@ class StatusHistory(Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     application: Mapped["Application"] = relationship(back_populates="status_history")
+
+
+class AnalyticsSnapshot(Base):
+    __tablename__ = "analytics_snapshot"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
