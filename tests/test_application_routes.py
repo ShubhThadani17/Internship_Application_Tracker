@@ -174,3 +174,13 @@ async def test_status_transition_with_deadline_via_api(
     body = response.json()
     assert body["current_status"] == "OA1"
     assert body["deadline"] is not None
+
+
+@pytest.mark.asyncio
+async def test_get_analytics_returns_data_when_computed(client: AsyncClient, auth_headers: dict):
+    response = await client.get("/analytics", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "data" in body
+    assert "funnel_counts" in body["data"]

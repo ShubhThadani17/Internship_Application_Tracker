@@ -270,3 +270,121 @@ async def test_terminal_status_ignores_passed_deadline(
 
     # Assert - terminal clear wins regardless of the passed value
     assert updated_application.deadline is None
+
+@pytest.mark.asyncio
+async def test_status_transition_resets_deadline_notified(db: AsyncSession, test_user: User):
+    application = await create_application(
+        db=db,
+        user_id=test_user.id,
+        company_name="Uber",
+        role_title="Backend Intern",
+    )
+    first_deadline = datetime.now(timezone.utc) + timedelta(days=5)
+    application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=ApplicationStatus.OA1,
+        deadline=first_deadline,
+    )
+    application.deadline_notified = True
+    await db.commit()
+    await db.refresh(application)
+
+    second_deadline = datetime.now(timezone.utc) + timedelta(days=2)
+    updated_application = await update_application_status(
+        db=db,
+        application=application,
+        target_status=ApplicationStatus.OA2,
+        deadline=second_deadline,
+    )
+
+    assert updated_application.deadline_notified is False
+
+
+from app.repositories.application_repository import (
+    get_application_by_company_name,
+    create_application_at_status,
+)
+
+
+@pytest.mark.asyncio
+async def test_get_application_by_company_name_finds_match(db: AsyncSession, test_user: User):
+    await create_application(
+        db=db, user_id=test_user.id, company_name="Google", role_title="SWE Intern"
+    )
+
+    result = await get_application_by_company_name(
+        db=db, user_id=test_user.id, company_name="google"
+    )
+
+    assert result is not None
+    assert result.company_name == "Google"
+
+
+@pytest.mark.asyncio
+async def test_get_application_by_company_name_no_match_returns_none(
+    db: AsyncSession, test_user: User
+):
+    result = await get_application_by_company_name(
+        db=db, user_id=test_user.id, company_name="NonexistentCorp"
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_application_by_company_name_scoped_to_user(
+    db: AsyncSession, test_user: User
+):
+    other_user = User(email="other@example.com", hashed_password="fake_hash")
+    db.add(other_user)
+    await db.flush()
+
+    await create_application(
+        db=db, user_id=other_user.id, company_name="Meta", role_title="Intern"
+    )
+
+    result = await get_application_by_company_name(
+        db=db, user_id=test_user.id, company_name="Meta"
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_create_application_at_status_sets_starting_status(
+    db: AsyncSession, test_user: User
+):
+    application = await create_application_at_status(
+        db=db,
+        user_id=test_user.id,
+        company_name="ColdEmailCo",
+        role_title="Backend Intern",
+        starting_status=ApplicationStatus.INTERVIEW,
+    )
+
+    assert application.current_status == ApplicationStatus.INTERVIEW
+
+    result = await db.execute(
+        select(StatusHistory).where(StatusHistory.application_id == application.id)
+    )
+    history = result.scalar_one()
+
+    assert history.from_status is None
+    assert history.to_status == ApplicationStatus.INTERVIEW
+
+
+@pytest.mark.asyncio
+async def test_create_application_at_status_with_deadline(db: AsyncSession, test_user: User):
+    deadline_value = datetime.now(timezone.utc) + timedelta(days=3)
+
+    application = await create_application_at_status(
+        db=db,
+        user_id=test_user.id,
+        company_name="ColdEmailCo",
+        role_title="Backend Intern",
+        starting_status=ApplicationStatus.OA1,
+        deadline=deadline_value,
+    )
+
+    assert application.deadline == deadline_value
