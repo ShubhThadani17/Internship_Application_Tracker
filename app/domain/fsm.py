@@ -37,7 +37,7 @@ VALID_TRANSITIONS: dict[ApplicationStatus, set[ApplicationStatus]] = {
     ApplicationStatus.OFFER: {
         ApplicationStatus.WITHDRAWN,
     },
-    #terminal states
+    #terminal states - are states where a process ends and cannot transition to another state
     ApplicationStatus.REJECTED: set(),
     ApplicationStatus.WITHDRAWN: set(),
     ApplicationStatus.GHOSTED: set(),
