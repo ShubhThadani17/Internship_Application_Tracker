@@ -5,7 +5,10 @@ import uuid
 from app.db.base import get_db
 from app.core.dependencies import get_current_user_id
 from app.domain.fsm import InvalidTransitionError
-from app.services.gemini_service import extract_email_details
+from app.services.gemini_service import (
+    extract_email_details,
+    GeminiServiceError,
+)
 from app.domain.status_resolver import resolve_status
 from app.repositories.application_repository import (
     get_application_by_company_name ,
@@ -18,32 +21,59 @@ from app.schemas.application import ApplicationResponse
 router = APIRouter()
 
 
-@router.post("/parse-email", response_model=ParsedApplicationSuggestion)
+@router.post(
+    "/parse-email",
+    response_model=ParsedApplicationSuggestion,
+)
 async def parse_email_route(
     payload: ParsedEmailRequest,
     db: AsyncSession = Depends(get_db),
     current_user_id: uuid.UUID = Depends(get_current_user_id),
 ):
-    extracted = extract_email_details(payload.raw_text)
+    # Call Gemini asynchronously and handle provider errors.
+    try:
+        extracted = await extract_email_details(payload.raw_text)
+    except GeminiServiceError as exc:
+        raise HTTPException(
+            status_code=exc.http_status_code,
+            detail=exc.public_detail,
+        ) from exc
 
     company_name = extracted.get("company_name")
     existing_application = None
+
     if company_name:
         existing_application = await get_application_by_company_name(
-            db=db, user_id=current_user_id, company_name=company_name
+            db=db,
+            user_id=current_user_id,
+            company_name=company_name,
         )
 
-    current_status = existing_application.current_status if existing_application else None
-    resolved_status = resolve_status(extracted.get("stage"), current_status)
+    current_status = (
+        existing_application.current_status
+        if existing_application
+        else None
+    )
 
-    return ParsedApplicationSuggestion(
-        application_id=existing_application.id if existing_application else None,
+    resolved_status = resolve_status(
+        extracted.get("stage"),
+        current_status,
+    )
+
+    suggestion = ParsedApplicationSuggestion(
+        application_id=(
+            existing_application.id
+            if existing_application
+            else None
+        ),
         company_name=company_name,
         role_title=extracted.get("role_title"),
         suggested_status=resolved_status,
         deadline=extracted.get("deadline"),
         is_new_application=existing_application is None,
     )
+
+    return suggestion
 
 
 @router.post("/confirm-parsed-application", response_model=ApplicationResponse)
