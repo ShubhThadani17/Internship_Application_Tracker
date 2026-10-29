@@ -38,6 +38,16 @@ class Application(Base):
     )
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deadline_notified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deadline_notification_status: Mapped[str] = mapped_column(
+    String(16),
+    nullable=False,
+    default="pending",
+    server_default="pending",
+)
+    deadline_notification_queued_at: Mapped[datetime | None] = mapped_column(
+    DateTime(timezone=True),
+    nullable=True,
+)
     applied_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -61,6 +71,15 @@ class StatusHistory(Base):
 class AnalyticsSnapshot(Base):
     __tablename__ = "analytics_snapshot"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
     data: Mapped[dict] = mapped_column(JSON, nullable=False)
-    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
