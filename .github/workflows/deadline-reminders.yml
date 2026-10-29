@@ -1,0 +1,54 @@
+name: Deadline reminders
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deadline-reminders
+  cancel-in-progress: false
+
+jobs:
+  send-deadline-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Real hosted PostgreSQL connection string.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      # Required by application settings when importing the task.
+      # Direct-send mode does not use Redis or JWT authentication.
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JWT_SECRET_KEY: scheduled-runner-unused
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      NOTIFY_EMAIL: unused@example.invalid
+      GEMINI_API_KEY: scheduled-runner-unused
+      GEMINI_MODEL: gemini-3.5-flash-lite
+
+      # Real Brevo credentials.
+      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirement.txt
+
+      - name: Run deadline reminder scan
+        run: python -m scripts.run_deadline_reminders
