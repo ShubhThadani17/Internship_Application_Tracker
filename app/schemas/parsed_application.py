@@ -1,13 +1,16 @@
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.domain.status import ApplicationStatus
 from datetime import datetime
 
 
 class ParsedEmailRequest(BaseModel):
-    raw_text: str
+    raw_text: str = Field(
+        min_length=1,
+        max_length=20000,
+    )
 
 
 class ParsedApplicationSuggestion(BaseModel):
