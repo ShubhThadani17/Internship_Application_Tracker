@@ -1,4 +1,5 @@
 import uuid
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -267,3 +268,94 @@ async def test_patch_deadline_set_preserve_and_clear(
 
     assert clear_response.status_code == 200
     assert clear_response.json()["deadline"] is None
+
+@pytest.mark.asyncio
+async def test_user_cannot_access_another_users_application(
+    client: AsyncClient,
+    auth_headers: dict,
+):
+    # User A creates an application.
+    create_response = await client.post(
+        "/applications",
+        json={
+            "company_name": "PrivateCompany",
+            "role_title": "Backend Intern",
+        },
+        headers=auth_headers,
+    )
+
+    assert create_response.status_code == 201
+
+    application = create_response.json()
+    application_id = application["id"]
+
+    # Register User B.
+    email = f"another-user-{uuid4()}@example.com"
+    password = "StrongPassword123!"
+
+    register_response = await client.post(
+        "/auth/register",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+
+    assert register_response.status_code == 201
+
+    # Authenticate as User B.
+    login_response = await client.post(
+        "/auth/login",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+
+    assert login_response.status_code == 200
+
+    user_b_headers = {
+        "Authorization": (
+            f"Bearer {login_response.json()['access_token']}"
+        )
+    }
+
+    # User B must not be able to retrieve User A's application.
+    get_response = await client.get(
+        f"/applications/{application_id}",
+        headers=user_b_headers,
+    )
+
+    assert get_response.status_code == 404
+
+    # User B must not be able to modify User A's application.
+    patch_response = await client.patch(
+        f"/applications/{application_id}",
+        json={"role_title": "Compromised Role"},
+        headers=user_b_headers,
+    )
+
+    assert patch_response.status_code == 404
+
+    # User B's application list must not contain User A's application.
+    list_response = await client.get(
+        "/applications",
+        headers=user_b_headers,
+    )
+
+    assert list_response.status_code == 200
+
+    user_b_application_ids = {
+        item["id"] for item in list_response.json()
+    }
+
+    assert application_id not in user_b_application_ids
+
+    # Confirm User A's application remains unchanged.
+    owner_response = await client.get(
+        f"/applications/{application_id}",
+        headers=auth_headers,
+    )
+
+    assert owner_response.status_code == 200
+    assert owner_response.json()["role_title"] == "Backend Intern"
