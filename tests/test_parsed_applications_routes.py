@@ -2,6 +2,12 @@ from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
+from app.services.gemini_service import (
+    GeminiConfigurationError,
+    GeminiInvalidResponseError,
+    GeminiRateLimitError,
+    GeminiTimeoutError,
+)
 
 
 FAKE_EXTRACTION_EXISTING_COMPANY = {
@@ -192,3 +198,32 @@ async def test_confirm_parsed_application_invalid_transition_returns_400(
     )
 
     assert response.status_code == 400
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+    ("error_type", "expected_status"),
+    [
+        (GeminiTimeoutError, 504),
+        (GeminiRateLimitError, 503),
+        (GeminiConfigurationError, 503),
+        (GeminiInvalidResponseError, 502),
+    ],
+    )
+    async def test_parse_email_returns_controlled_provider_error(
+    client: AsyncClient,
+    auth_headers: dict,
+    error_type,
+    expected_status,
+    ):
+        with patch(
+        "app.api.parsed_applications_routes.extract_email_details",
+        side_effect=error_type(),
+        ):
+            response = await client.post(
+            "/parse-email",
+            json={"raw_text": "Synthetic test email"},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == error_type.public_detail
+        assert "API key denied" not in response.text

@@ -2,7 +2,11 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from datetime import datetime, timezone
 
+from sqlalchemy import select
+
+from app.db.models import AnalyticsSnapshot, User
 
 @pytest.mark.asyncio
 async def test_create_application(client: AsyncClient, auth_headers: dict):
@@ -177,10 +181,89 @@ async def test_status_transition_with_deadline_via_api(
 
 
 @pytest.mark.asyncio
-async def test_get_analytics_returns_data_when_computed(client: AsyncClient, auth_headers: dict):
-    response = await client.get("/analytics", headers=auth_headers)
+async def test_get_analytics_computes_current_user_data(
+    client: AsyncClient,
+    auth_headers: dict,
+):
+    create_response = await client.post(
+        "/applications",
+        json={
+            "company_name": "OnDemandAnalyticsTestCo",
+            "role_title": "Backend Intern",
+        },
+        headers=auth_headers,
+    )
+
+    assert create_response.status_code == 201
+
+    response = await client.get(
+        "/analytics",
+        headers=auth_headers,
+    )
 
     assert response.status_code == 200
+
     body = response.json()
+
     assert "data" in body
+    assert "computed_at" in body
     assert "funnel_counts" in body["data"]
+    assert body["data"]["funnel_counts"]["APPLIED"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_patch_deadline_set_preserve_and_clear(
+    client: AsyncClient,
+    auth_headers: dict,
+):
+    # Create an application without a deadline.
+    create_response = await client.post(
+        "/applications",
+        json={
+            "company_name": "DeadlineTestCo",
+            "role_title": "Backend Intern",
+        },
+        headers=auth_headers,
+    )
+
+    assert create_response.status_code == 201
+
+    application_id = create_response.json()["id"]
+    assert create_response.json()["deadline"] is None
+
+    # 1. Set the deadline.
+    deadline_value = "2026-11-15T10:00:00+00:00"
+
+    set_response = await client.patch(
+        f"/applications/{application_id}",
+        json={"deadline": deadline_value},
+        headers=auth_headers,
+    )
+
+    assert set_response.status_code == 200
+    saved_deadline = set_response.json()["deadline"]
+    assert saved_deadline is not None
+
+    # 2. Update another field without changing the deadline.
+    update_response = await client.patch(
+        f"/applications/{application_id}",
+        json={"role_title": "Software Engineer Intern"},
+        headers=auth_headers,
+    )
+
+    assert update_response.status_code == 200
+    assert (
+        update_response.json()["role_title"]
+        == "Software Engineer Intern"
+    )
+    assert update_response.json()["deadline"] == saved_deadline
+
+    # 3. Explicitly clear the deadline.
+    clear_response = await client.patch(
+        f"/applications/{application_id}",
+        json={"deadline": None},
+        headers=auth_headers,
+    )
+
+    assert clear_response.status_code == 200
+    assert clear_response.json()["deadline"] is None
