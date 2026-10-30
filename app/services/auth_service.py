@@ -7,6 +7,7 @@ from app.core.redis_client import redis_client
 from app.core.security import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
 from app.core.config import settings
 from app.db.models import User
+from jose import JWTError
 
 
 REFRESH_TOKEN_PREFIX = "refresh_token"
@@ -20,29 +21,77 @@ async def issue_tokens(user_id: uuid.UUID) -> tuple[str, str]:
     return access_token, refresh_token
 
 
-async def rotate_refresh_token(old_refresh_token: str) -> tuple[str, str]:
-    payload = decode_token(old_refresh_token)
+async def rotate_refresh_token(
+    old_refresh_token: str,
+) -> tuple[str, str]:
+
+    # Decode the token safely.
+    try:
+        payload = decode_token(old_refresh_token)
+    except JWTError as exc:
+        raise ValueError(
+            "Refresh token is invalid or expired"
+        ) from exc
+
+    # Validate token payload.
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid refresh token")
 
     if payload.get("type") != "refresh":
         raise ValueError("Token is not a refresh token")
 
-    token_id = payload["jti"]
-    user_id = payload["sub"]
+    token_id = payload.get("jti")
+    user_id = payload.get("sub")
 
-    stored_user_id = await redis_client.get(f"{REFRESH_TOKEN_PREFIX}:{token_id}")
+    if not token_id or not user_id:
+        raise ValueError("Invalid refresh token")
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("Invalid refresh token") from exc
+
+    # Check whether the refresh token exists in Redis.
+    stored_user_id = await redis_client.get(
+        f"{REFRESH_TOKEN_PREFIX}:{token_id}"
+    )
 
     if stored_user_id is None or stored_user_id != user_id:
-        raise ValueError("Refresh token is invalid, expired, or already used")
+        raise ValueError(
+            "Refresh token is invalid, expired, or already used"
+        )
 
-    await redis_client.delete(f"{REFRESH_TOKEN_PREFIX}:{token_id}")
-    return await issue_tokens(uuid.UUID(user_id))
+    # Invalidate the old token.
+    await redis_client.delete(
+        f"{REFRESH_TOKEN_PREFIX}:{token_id}"
+    )
+
+    # Issue a fresh access and refresh token pair.
+    return await issue_tokens(user_uuid)
 
 
 async def revoke_refresh_token(refresh_token: str) -> None:
-    payload = decode_token(refresh_token)
+
+    try:
+        payload = decode_token(refresh_token)
+
+    except JWTError:
+        # Invalid or expired token.
+        # Logout is intentionally idempotent.
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    if payload.get("type") != "refresh":
+        return
+
     token_id = payload.get("jti")
+
     if token_id:
-        await redis_client.delete(f"{REFRESH_TOKEN_PREFIX}:{token_id}")
+        await redis_client.delete(
+            f"{REFRESH_TOKEN_PREFIX}:{token_id}"
+        )
 
 
 async def register_user(db: AsyncSession, email: str, password: str) -> User:
