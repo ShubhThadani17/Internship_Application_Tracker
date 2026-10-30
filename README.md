@@ -1,145 +1,500 @@
-# Internship Application Tracker with Deadline Intelligence
+# Internship Application Tracker
 
-A backend-focused internship application tracker built to go beyond a plain CRUD tracker: a finite-state-machine-driven status pipeline, automated deadline reminders, LLM-assisted email parsing with human confirmation, and precomputed analytics.
+A multi user REST API that replaces spreadsheet tracking for internship applications. It enforces valid hiring stage transitions with a finite state machine, extracts application details from pasted recruiter emails using an LLM, computes funnel analytics, and sends automated deadline reminders.
+ 
+![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+ 
+## Live Links
+ 
+| Service | Link |
+|---|---|
+| Frontend (Vercel) | [Add Vercel URL here](https://your-app.vercel.app) |
+| API (Render) | [Add Render URL here](https://your-api.onrender.com) |
+| API Docs (Swagger UI) | [Add Render URL here, ending in /docs](https://your-api.onrender.com/docs) |
+| Database (Supabase) | [Add Supabase project link here](https://supabase.com/dashboard/project/your-project-id) |
 
-## Why this project exists
+## Overview
 
-Most "application tracker" projects are a database table with a form in front of it. This project intentionally goes further in a few specific directions:
+Internship Application Tracker is a multi-user backend system for recording and monitoring internship applications. Each application belongs to an authenticated user and moves through a controlled hiring pipeline. The API validates status changes, records status history, computes user-specific analytics, and supports AI-assisted extraction of application details from pasted email content.
 
-- A real finite-state machine governs status transitions, so an application cannot jump from `APPLIED` straight to `OFFER`.
-- A background job pipeline (Celery) handles time-based work — deadline reminders — that has no natural place inside a request/response cycle.
-- An LLM (Google Gemini, free tier) is used narrowly: to extract structured data from unstructured email text, with a human confirmation step before anything is written to the database, never as an autonomous writer.
-- Analytics are precomputed and event-triggered rather than calculated live on every request, using SQL window functions rather than in-Python loops.
+Deadline reminders are delivered by email through Brevo. The repository retains Celery-based background-task support for local development, while the intended low-cost deployment uses a scheduled GitHub Actions workflow to run the reminder scanner.
 
-## Tech stack
+The project is intentionally backend-focused. API consumers can use the automatically generated Swagger UI; a frontend is not included in the current scope.
 
-- **Language / Framework:** Python, FastAPI (async)
-- **Database:** PostgreSQL, SQLAlchemy (async ORM for the API, sync ORM for background tasks), Alembic for migrations
-- **Auth:** JWT access tokens + Redis-backed refresh tokens, bcrypt password hashing
-- **Background jobs:** Celery (worker + Beat), Redis as broker
-- **Email:** Brevo HTTPS API (not SMTP — see Design Decisions)
-- **LLM:** Google Gemini (Flash), free tier, structured JSON output mode
-- **Testing:** Pytest, pytest-asyncio, transaction-rollback test isolation
-- **Containerization:** Docker Compose (local development)
+## Features
 
-## Architecture overview
+### Application management
 
+- Create, retrieve, list, and update internship applications.
+- Store company, role, current status, deadline, and other application details.
+- Restrict application access to the authenticated owner.
+- Track status changes in a separate history table.
+- Validate lifecycle changes through a finite state machine rather than accepting arbitrary status updates.
+- Normalize company names to uppercase and role titles to lowercase.
+
+### Authentication and authorization
+
+- User registration and login.
+- JWT access and refresh tokens.
+- Short-lived access tokens and longer-lived refresh tokens.
+- Refresh-token rotation and Redis-backed refresh-token state.
+- Ownership checks on application and parsed-application operations.
+
+### AI-assisted email parsing
+
+- Submit pasted recruitment email text to the Gemini API.
+- Extract a company, role, hiring stage, and possible deadline.
+- Return a suggestion without immediately creating or changing an application.
+- Require a separate confirmation request before persisting the suggestion.
+- Match an existing application by the authenticated user, normalized company name, and normalized role title.
+- Reject duplicate parsed confirmations while allowing different roles at the same company.
+
+### Analytics
+
+The authenticated analytics endpoint computes metrics for the current user, including:
+
+- Application counts by current status.
+- Funnel conversion metrics derived from status history.
+- Average elapsed time between status-history events.
+- Ghosting rate.
+- Response rate by company.
+
+Analytics are computed on demand by the API. The endpoint does not depend on a shared, global analytics snapshot.
+
+### Deadline reminders
+
+- Identify applications with deadlines approaching within the reminder window.
+- Track reminder processing states to reduce duplicate sends and support retrying failed work.
+- Send reminders to the email address associated with the application owner.
+- Deliver email through Brevo.
+- Run the production reminder scanner on a GitHub Actions schedule.
+
+## Tech Stack
+ 
+| Area | Technology |
+|---|---|
+| Language | Python 3.12+ |
+| API framework | FastAPI, Pydantic v2 |
+| Database | PostgreSQL, SQLAlchemy 2.0 (async), Alembic |
+| Auth and token state | JWT, bcrypt, Redis |
+| AI extraction | Google Gemini API (structured JSON output) |
+| Email | Brevo API |
+| Background jobs | GitHub Actions cron (production), Celery with Beat (local) |
+| Frontend | Vanilla HTML and JavaScript |
+| Testing | pytest, pytest asyncio, httpx |
+| Infrastructure | Docker Compose, GitHub Actions, Render, Vercel, Supabase |
+
+## Architecture
+ 
+The project uses a layered structure so HTTP handling, business rules, and database access stay separate and independently testable.
+ 
+```mermaid
+flowchart TD
+    Client["Client / Swagger UI"] --> API["FastAPI routes"]
+    API --> Services["Services: auth, Gemini extraction, analytics"]
+    Services --> Domain["Domain: FSM, normalization, stage resolver"]
+    Services --> Repo["Repositories: async SQLAlchemy"]
+    Repo --> PG[("PostgreSQL: users, applications, status history")]
+    Services --> Redis[("Redis: refresh token state")]
 ```
-                     ┌────────────────────┐
-                     │   FastAPI (async)   │
-                     │  — CRUD, auth,      │
-                     │  status FSM,        │
-                     │  parse/confirm,     │
-                     │  analytics read     │
-                     └─────────┬───────────┘
-                               │
-                 ┌─────────────┼─────────────┐
-                 ▼                           ▼
-          PostgreSQL (async)           Redis (refresh tokens,
-                                          Celery broker)
-                 ▲                           │
-                 │                           ▼
-          PostgreSQL (sync) ◄──── Celery worker + Beat (combined)
-                                   — deadline scan (every 12h)
-                                   — email notifications (Brevo)
-                                   — analytics recompute (event-triggered)
+ 
+## Workflows
+ 
+### Email parsing: suggest, review, confirm
+ 
+The AI never writes to the database on its own. The user always reviews the extracted details first.
+ 
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as FastAPI
+    participant LLM as Gemini
+    participant DB as PostgreSQL
+ 
+    User->>API: POST /parse-email with raw email text
+    API->>LLM: Extract company, role, stage, deadline
+    LLM-->>API: Structured JSON
+    API-->>User: Suggestion returned, nothing saved yet
+    User->>User: Review or edit the suggestion
+    User->>API: POST /confirm-parsed-application
+    API->>API: Ownership, duplicate, and FSM checks
+    API->>DB: Create or update application
+    API-->>User: Confirmed
+```
+ 
+### Status transitions: validated and audited
+ 
+```mermaid
+flowchart LR
+    A["PATCH /applications/id/status"] --> B{"Owned by user?"}
+    B -->|No| C["404 Not Found"]
+    B -->|Yes| D{"Transition allowed by FSM?"}
+    D -->|No| E["400 Bad Request"]
+    D -->|Yes| F["Update status"]
+    F --> G["Write status_history row"]
+    G --> H["Return updated application"]
+```
+ 
+### Deadline reminders: scheduled and retry safe
+ 
+```mermaid
+flowchart LR
+    A["GitHub Actions cron, every 30 minutes"] --> B["run_deadline_reminders.py"]
+    B --> C["Scan deadlines within 48 hours"]
+    C --> D["Claim eligible records"]
+    D --> E["Send email via Brevo API"]
+    E --> F{"Accepted?"}
+    F -->|Yes| G["Mark as sent"]
+    F -->|No| H["Mark as failed, retried on next scan"]
+```
+ 
+### Authentication: rotating refresh tokens
+ 
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as FastAPI
+    participant R as Redis
+ 
+    User->>API: POST /auth/login
+    API->>R: Store refresh token ID with TTL
+    API-->>User: Access token and refresh token
+    User->>API: POST /auth/refresh
+    API->>R: Verify and delete old token ID
+    API->>R: Store new token ID
+    API-->>User: New token pair
+    User->>API: POST /auth/logout
+    API->>R: Delete token ID
+    API-->>User: Session revoked
+```
+## Application Lifecycle
+
+Application status is represented by the domain-level `ApplicationStatus` enum. The current statuses are:
+
+- `APPLIED`
+- `OA1`
+- `OA2`
+- `INTERVIEW`
+- `OFFER`
+- `REJECTED`
+- `WITHDRAWN`
+- `GHOSTED`
+
+Allowed transitions are defined in the finite state machine (`app/domain/fsm.py`). The API rejects transitions that are not permitted by those rules. Status changes are recorded in `status_history`, allowing the system to retain the sequence and timing of an application's progress.
+
+The API uses a dedicated status-transition endpoint so a normal application-field update cannot bypass the lifecycle rules.
+
+## API Reference
+
+All application, parsing, confirmation, and analytics operations require authentication. Register and login to obtain tokens, then send the access token using the `Authorization: Bearer <access_token>` header.
+
+### Authentication
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/auth/register` | Register a user account. |
+| `POST` | `/auth/login` | Authenticate and issue access and refresh tokens. |
+| `POST` | `/auth/refresh` | Rotate a refresh token and issue a new token pair. |
+| `POST` | `/auth/logout` | Revoke the supplied refresh token. |
+
+### Applications
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/applications` | Create an application. |
+| `GET` | `/applications` | List applications owned by the authenticated user. |
+| `GET` | `/applications/{application_id}` | Retrieve one application owned by the user. |
+| `PATCH` | `/applications/{application_id}` | Partially update editable application fields, including the deadline. |
+| `PATCH` | `/applications/{application_id}/status` | Validate and record a status transition. |
+
+### Email parsing
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/parse-email` | Extract a structured application suggestion from pasted email text. |
+| `POST` | `/confirm-parsed-application` | Confirm a suggestion and create or update the matching application. |
+
+### Analytics
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/analytics` | Compute analytics for the authenticated user. |
+
+FastAPI exposes the interactive Swagger UI and OpenAPI schema when the API is running:
+
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+
+The route list above reflects the current documented API surface. Use `/docs` as the source of truth for request and response schemas.
+
+## Email Parsing Workflow
+
+`POST /parse-email` sends the supplied email text to Gemini and returns extracted fields such as company name, role title, stage, and deadline. The endpoint does not persist the extracted result.
+
+The client should present the suggestion to the user for review. After the user confirms or edits the extracted values, it calls `POST /confirm-parsed-application`.
+
+Confirmation behavior:
+
+1. If an `application_id` is supplied, the API verifies that the application belongs to the authenticated user and applies the status update through the normal FSM path.
+2. If no `application_id` is supplied, the API checks for an existing application with the same normalized company and role for that user.
+3. If a duplicate is found, the API returns `409 Conflict` rather than creating another parsed application.
+4. Otherwise, a new application is created and receives its database-generated ID.
+
+Company names are normalized to uppercase and role titles to lowercase, with whitespace normalized before persistence and matching. The same company may therefore have multiple applications when the roles differ.
+
+The human-confirmation step is intentional: AI extraction is a suggestion and should not silently create or modify application records.
+
+## Analytics
+
+`GET /analytics` calculates metrics from the authenticated user's application and status-history records. User scoping is applied during the calculations so one account's data is not included in another account's response.
+
+The response contains a `data` object and a `computed_at` timestamp. The metrics include funnel counts, conversion rates, average time between status-history events, ghosting rate, and response rate by company.
+
+Analytics are calculated on demand. This keeps the read path independent of a background analytics refresh schedule, at the cost of running the aggregation queries when the endpoint is requested.
+
+## Deadline Reminder Workflow
+
+The reminder scanner looks for eligible applications with deadlines in the next 48 hours. Reminder state is tracked on the application record so the scanner can distinguish pending, queued, sent, and failed work. Stale queued records can be recovered and failed reminders can be considered again by a later scan.
+
+Reminder emails are sent through Brevo to the email address of the user who owns the application. `FROM_EMAIL` identifies the configured sender; there is no separate global notification recipient.
+
+### Production scheduling
+
+The repository includes:
+
+- `scripts/run_deadline_reminders.py` — direct runner for a reminder scan.
+- `.github/workflows/deadline-reminders.yml` — scheduled GitHub Actions workflow.
+
+The workflow is configured to run approximately every 30 minutes. GitHub Actions scheduled jobs are best-effort and may start later than the cron time; this should not be treated as a real-time notification guarantee.
+
+### Local Celery support
+
+Celery task modules and a Celery Beat schedule are retained for local development and task testing. The selected low-cost deployment path uses the GitHub Actions runner for scheduled email processing instead of requiring a continuously running Celery worker and scheduler.
+
+## Data Model
+
+The main relational entities are:
+
+| Entity | Purpose |
+|---|---|
+| `users` | Account identity, credentials, and application ownership. |
+| `applications` | Company, role, current status, deadline, and notification processing state. |
+| `status_history` | Append-only record of application status transitions and timestamps. |
+| `analytics_snapshot` | Per-user analytics snapshot model retained for task-related functionality; the live `/analytics` endpoint computes its response on demand. |
+
+Applications reference their owner through `user_id`. Status history is associated with an application. Database schema changes are managed using Alembic migrations.
+
+## Project Structure
+
+```text
+.
+├── app/
+│   ├── api/              # FastAPI route handlers
+│   ├── core/             # Settings, security, dependencies, Redis and Celery setup
+│   ├── db/               # ORM models and database sessions
+│   ├── domain/           # Status enum, FSM, normalization and stage resolution
+│   ├── repositories/     # Database access operations
+│   ├── schemas/          # Pydantic request and response schemas
+│   ├── services/         # Authentication, Gemini extraction and analytics
+│   ├── tasks/            # Celery deadline, notification and analytics tasks
+│   └── main.py           # FastAPI application entry point
+├── alembic/              # Alembic configuration and migration versions
+├── scripts/
+│   └── run_deadline_reminders.py
+├── tests/                # Unit and API integration tests
+├── .github/
+│   └── workflows/
+│       └── deadline-reminders.yml
+├── .env.example
+├── requirements.txt
+└── README.md
 ```
 
-FastAPI and Celery each maintain their **own** database engine — async for the API, sync for background tasks — because Celery's execution model has no event loop, and reusing an async engine across Celery's process model causes event-loop-binding errors with asyncpg. This is a deliberate architectural boundary, not an oversight.
+## Local Development
 
-## Core domain model
+### Prerequisites
 
-- **User** — auth identity.
-- **Application** — company, role, current status, deadline, deadline_notified flag.
-- **StatusHistory** — an append-only log of every status transition, used both as an audit trail and as the source data for analytics (average time per status, conversion rates).
+- Python 3.12 or newer.
+- Docker and Docker Compose.
+- Git.
+- Gemini API key for email parsing.
+- Brevo API key and a configured sender email for reminder delivery.
 
-### Status FSM
+PostgreSQL and Redis must be available locally or through managed services.
 
-Applications move through a finite state machine (`APPLIED → OA1 → OA2 → INTERVIEW → OFFER`, with `REJECTED`, `WITHDRAWN`, and `GHOSTED` reachable as terminal branches from most stages). Invalid transitions are rejected at the repository layer, not just the API layer, so no code path can force an invalid state.
-
-## What's been built
-
-**Authentication and core tracking**
-User registration and login with JWT access tokens and Redis-backed refresh tokens, bcrypt password hashing. Full CRUD for applications, scoped so a user can only ever see or modify their own data. Status changes are validated through the FSM and every transition is recorded in an append-only `StatusHistory` log, which later becomes the raw data analytics is computed from.
-
-**Deadline reminders**
-Each application can carry a `deadline` and a `deadline_notified` flag. A Celery Beat job runs every 12 hours, finds applications with a deadline in the next 48 hours that haven't been notified yet, and sends a reminder email through Brevo's HTTPS API, with automatic retry (up to 3 attempts) on transient failures. Moving an application to a terminal status (`REJECTED` / `WITHDRAWN` / `GHOSTED`) automatically clears its deadline, since it's no longer relevant.
-
-**LLM-assisted email parsing**
-`POST /parse-email` accepts raw email text and calls Gemini with a structured JSON schema to extract company name, role, stage, and deadline — read-only, nothing is written to the database at this step. If a matching application already exists (case-insensitive company match), the extracted stage is disambiguated against that application's current status (for example, "OA" appearing a second time is inferred to mean OA2, not OA1). If no match exists, the response is a "new application" suggestion instead, since a cold interview invite may be the first record of a company you ever get. `POST /confirm-parsed-application` takes the (optionally user-edited) suggestion and performs the actual write, reusing the same FSM-validated code path as the manual API rather than a shortcut. The deadline is never auto-converted from the LLM's raw text into a real datetime — a human must supply an explicit, unambiguous datetime at confirmation time.
-
-**Analytics**
-Five metrics are computed: funnel counts per status, conversion rate between consecutive stages, average time spent per status, ghosting rate, and response rate by company — all computed with SQL aggregates and window functions (`LAG` for time-per-status) rather than Python loops. The result is stored as a single overwritten JSON snapshot and recomputed automatically via a Celery task fired right after any status change, so the numbers are always fresh without being recalculated on every read.
-
-## Key design decisions (and why)
-
-- **Sync SQLAlchemy session for Celery tasks, kept separate from the async engine.** Celery's prefork worker model and asyncpg's event-loop-bound connection pooling don't mix safely; a sync engine avoids the entire bug class rather than working around it.
-- **Combined worker + Beat process (`celery worker -B`) instead of two separate processes.** A deliberate simplification for lightweight, single-worker deployment. The known tradeoff (a crash loses both scheduling and execution at once) is accepted given the low task volume here.
-- **Deadline notification uses "mark-then-send," not "send-then-mark."** `deadline_notified` is set to `True` the moment a notification is queued, before the email actually sends. A notification that fails all its retries is never automatically retried on the next scan — a known, accepted gap, chosen because the alternative is more fragile against connection drops and cold starts.
-- **Brevo's HTTPS API instead of SMTP.** Many hosting platforms block outbound SMTP on port 587; an HTTPS API sidesteps the restriction entirely.
-- **LLM output is a suggestion, never a direct write.** Every LLM-derived field, especially the deadline, requires explicit human confirmation before touching the database. The backend does not rely on a frontend to enforce this — the confirm endpoint independently re-validates ownership and re-runs the FSM transition check, exactly as the manual PATCH endpoint does, so it stays safe even if called directly.
-- **Conversion rate = "ever reached this stage," not "resolved outcome from this stage."** Given the FSM allows branching (e.g. `OA1 → REJECTED` directly), conversion rate is defined as the simpler, more standard funnel metric: of all applications that ever reached stage X, what percentage also reached stage Y — regardless of what happened afterward.
-- **Analytics stored as a single overwritten JSON row, not a time-series table.** No historical analytics-of-analytics is needed for a personal tracker; simplicity won over generality here.
-
-## Known limitations (deliberate, not oversights)
-
-- Single-user by design. The notification path sends to one fixed configured email address rather than looking up a per-user recipient; multi-user support was consciously deferred since retrofitting it later is cheaper than half-supporting it now.
-- A notification that exhausts all retries is not automatically retried on a later scan, per the mark-then-send tradeoff above.
-- Company name matching is exact-match-after-lowercasing, not fuzzy. "Google" and "google" merge correctly; "Google" and "Google Inc." do not.
-- The test suite shares its database with the local development database rather than a fully isolated test database. Tests that aggregate across an entire table (analytics, deadline scanning) are written to assert deltas or the presence/absence of a specific known row, not absolute counts, to remain correct regardless of leftover manual-testing data.
-
-## Local development setup
+### 1. Clone the repository
 
 ```bash
-git clone <repo-url>
-cd Internship_Tracker
+git clone https://github.com/<your-username>/<repository-name>.git
+cd <repository-name>
+```
 
-# start Postgres and Redis
+Replace the URL and directory name with your repository details.
+
+### 2. Start local infrastructure
+
+If your Compose configuration defines the local PostgreSQL and Redis services, start them with:
+
+```bash
 docker compose up -d
+```
 
-# create and activate a virtual environment, then
+Check that the services are healthy before starting the API.
+
+### 3. Create and activate a virtual environment
+
+**Windows PowerShell**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+**macOS / Linux**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+### 4. Install dependencies
+
+```bash
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+```
 
-# copy and fill in environment variables (see below)
+### 5. Configure environment variables
+
+Copy the example file:
+
+**Windows PowerShell**
+
+```powershell
+Copy-Item .env.example .env
+```
+
+**macOS / Linux**
+
+```bash
 cp .env.example .env
+```
 
-# run migrations
+Edit `.env` with your local database, Redis, JWT, Gemini, and Brevo settings. See [Environment Variables](#environment-variables).
+
+### 6. Apply database migrations
+
+```bash
 alembic upgrade head
+```
 
-# run the API
+### 7. Start the API
+
+```bash
 uvicorn app.main:app --reload
+```
 
-# run the background worker + scheduler (Linux/macOS)
-celery -A app.core.celery_app worker -B --loglevel=info
+The API runs at `http://127.0.0.1:8000` by default. Open `http://127.0.0.1:8000/docs` to register a test account and exercise the endpoints.
 
-# on Windows, -B is unsupported; run as two processes instead:
-celery -A app.core.celery_app worker --loglevel=info --pool=solo
+### 8. Run the tests
+
+```bash
+pytest -q
+```
+
+## Environment Variables
+
+The application reads configuration from environment variables. Create `.env` locally from `.env.example`; never commit real credentials.
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection URL. The async application connection uses the `postgresql+asyncpg` driver form. |
+| `REDIS_URL` | Redis connection used for refresh-token state and Celery configuration. |
+| `JWT_SECRET_KEY` | Secret used to sign and verify JWTs. Use a long, random value. |
+| `JWT_ALGORITHM` | JWT signing algorithm configured by the application. |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access-token lifetime; the current project configuration uses 15 minutes. |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh-token lifetime; the current project configuration uses 7 days. |
+| `GEMINI_API_KEY` | Credential for Gemini email extraction. |
+| `GEMINI_MODEL` | Gemini model identifier used by the extraction service. |
+| `BREVO_API_KEY` | Credential for sending deadline reminder emails through Brevo. |
+| `FROM_EMAIL` | Sender address used for reminder emails. |
+
+
+## Running Background Tasks Locally
+
+For local development that uses the Celery queue, start a worker in one terminal:
+
+```bash
+celery -A app.core.celery_app worker --loglevel=info
+```
+
+Start Celery Beat in a separate terminal when you want to run the configured periodic schedule:
+
+```bash
 celery -A app.core.celery_app beat --loglevel=info
 ```
 
-Run tests with:
+On Windows, Celery worker pool compatibility can vary. If the default worker pool does not start, try the solo pool:
+
 ```bash
-pytest tests/
+celery -A app.core.celery_app worker --pool=solo --loglevel=info
 ```
 
-## Required environment variables
+To execute the direct reminder runner manually, with the required database and Brevo settings configured, use:
 
-```
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/internship_tracker
-REDIS_URL=redis://localhost:6379/0
-JWT_SECRET_KEY=
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=
-REFRESH_TOKEN_EXPIRE_DAYS=
-BREVO_API_KEY=
-FROM_EMAIL=          # must be a verified sender in your Brevo account
-NOTIFY_EMAIL=        # recipient for deadline reminder emails
-GEMINI_API_KEY=
+```bash
+python -m scripts.run_deadline_reminders
 ```
 
-## API surface (high level)
+The direct runner is the same entry point used by the scheduled GitHub Actions workflow.
 
-- `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`
-- `POST /applications`, `GET /applications`, `GET /applications/{id}`, `PATCH /applications/{id}`, `PATCH /applications/{id}/status`
-- `POST /parse-email`, `POST /confirm-parsed-application`
-- `GET /analytics`
+## Testing
+
+Run the full suite from the repository root:
+
+```bash
+pytest -q
+```
+
+The tests cover the main domain, repository, authentication, API, analytics, parsing, and background-task behavior. External services such as Gemini and Brevo should be mocked in automated tests rather than requiring live credentials or sending real emails.
+
+The current development test suite has passed locally. Re-run the suite after changing code, configuration, or migrations; a previous passing result does not replace verification of a new commit.
+
+## Deployment Design
+
+The intended low-cost deployment separates the API from scheduled reminder execution:
+
+| Component | Deployment responsibility |
+|---|---|
+| FastAPI service | Hosts the public API. |
+| Managed PostgreSQL | Stores users, applications, status history, and reminder state. |
+| Managed Redis | Supports refresh-token state and any deployed Celery functionality that is retained. |
+| GitHub Actions | Runs the deadline reminder script on its configured schedule. |
+| Gemini API | Extracts structured fields from user-submitted email text. |
+| Brevo | Sends deadline reminder emails. |
+
+The application can be hosted on a platform that supports a Python web service, with PostgreSQL and Redis supplied by managed services. Exact provider configuration, connection URLs, environment variables, and health checks should be confirmed during deployment.
+
+### GitHub Actions secrets
+
+Configure the repository secrets required by `.github/workflows/deadline-reminders.yml`. At minimum, the scheduled runner needs access to the production database and Brevo sender credentials. Add any additional settings that `app/core/config.py` validates at startup.
+
+Do not put production secrets directly in workflow YAML or commit them to the repository.
+
+## Deployment
+ 
+| Component | Platform |
+|---|---|
+| Frontend | Vercel |
+| API (FastAPI with Uvicorn) | Render |
+| PostgreSQL | Supabase |
+| Redis | Managed Redis instance for refresh token state |
+| Reminders | GitHub Actions workflow (`.github/workflows/deadline-reminders.yml`) every 30 minutes, with secrets stored in repository settings |
+ 
+Apply Alembic migrations to the production database before routing traffic to a new version.
