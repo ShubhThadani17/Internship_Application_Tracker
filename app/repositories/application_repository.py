@@ -7,6 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Application, StatusHistory
 from app.domain.fsm import transition
 from app.domain.status import ApplicationStatus
+from app.domain.normalization import (
+    normalize_company_name,
+    normalize_role_title,
+)
 
 
 TERMINAL_STATUSES = {
@@ -31,8 +35,8 @@ async def create_application(
 ) -> Application:
     application = Application(
         user_id=user_id,
-        company_name=company_name,
-        role_title=role_title,
+        company_name=normalize_company_name(company_name),
+        role_title=normalize_role_title(role_title),
         current_status=ApplicationStatus.APPLIED,
     )
 
@@ -114,14 +118,15 @@ async def update_application_fields(
     application: Application,
     updates: dict,
 ) -> Application:
-    if (
-        "company_name" in updates
-        and updates["company_name"] is not None
-    ):
-        application.company_name = updates["company_name"]
+    if "company_name" in updates and updates["company_name"] is not None:
+        application.company_name = normalize_company_name(
+            updates["company_name"]
+    )
 
     if "role_title" in updates and updates["role_title"] is not None:
-        application.role_title = updates["role_title"]
+        application.role_title = normalize_role_title(
+            updates["role_title"]
+        )
 
     if "deadline" in updates:
         new_deadline = updates["deadline"]
@@ -142,18 +147,32 @@ async def update_application_fields(
     return application
 
 
-async def get_application_by_company_name(
+async def get_application_by_company_and_role(
     db: AsyncSession,
     user_id: uuid.UUID,
     company_name: str,
+    role_title: str,
 ) -> Application | None:
+
+    company_name = normalize_company_name(company_name)
+    role_title = normalize_role_title(role_title)
+
     result = await db.execute(
-        select(Application).where(
+        select(Application)
+        .where(
             Application.user_id == user_id,
-            func.lower(Application.company_name) == company_name.lower(),
+            func.upper(
+                func.trim(Application.company_name)
+            ) == company_name,
+            func.lower(
+                func.trim(Application.role_title)
+            ) == role_title,
         )
+        .order_by(Application.created_at.desc())
+        .limit(1)
     )
-    return result.scalar_one_or_none()
+
+    return result.scalars().first()
 
 
 async def create_application_at_status(
@@ -168,8 +187,8 @@ async def create_application_at_status(
 
     application = Application(
         user_id=user_id,
-        company_name=company_name,
-        role_title=role_title,
+        company_name = normalize_company_name(company_name),
+        role_title = normalize_role_title(role_title),
         current_status=starting_status,
         deadline=None if terminal else deadline,
         deadline_notification_status=(
