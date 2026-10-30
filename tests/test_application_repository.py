@@ -28,8 +28,8 @@ async def test_create_application(db: AsyncSession, test_user: User):
     # Assert - Application
     assert application.id is not None
     assert application.user_id == test_user.id
-    assert application.company_name == "Google"
-    assert application.role_title == "Software Engineer Intern"
+    assert application.company_name == "GOOGLE"
+    assert application.role_title == "software engineer intern"
     assert application.current_status == ApplicationStatus.APPLIED
     assert application.deadline is None
 
@@ -67,8 +67,8 @@ async def test_get_application(db: AsyncSession, test_user: User):
     assert result is not None
     assert result.id == application.id
     assert result.user_id == test_user.id
-    assert result.company_name == "Microsoft"
-    assert result.role_title == "Backend Intern"
+    assert result.company_name == "MICROSOFT"
+    assert result.role_title == "backend intern"
 
 
 @pytest.mark.asyncio
@@ -302,38 +302,38 @@ async def test_status_transition_resets_deadline_notified(db: AsyncSession, test
 
 
 from app.repositories.application_repository import (
-    get_application_by_company_name,
+    get_application_by_company_and_role,
     create_application_at_status,
 )
 
 
 @pytest.mark.asyncio
-async def test_get_application_by_company_name_finds_match(db: AsyncSession, test_user: User):
+async def test_get_application_by_company_and_role_finds_match(db: AsyncSession, test_user: User):
     await create_application(
-        db=db, user_id=test_user.id, company_name="Google", role_title="SWE Intern"
+        db=db, user_id=test_user.id, company_name="GOOGLE", role_title="SWE Intern"
     )
 
-    result = await get_application_by_company_name(
-        db=db, user_id=test_user.id, company_name="google"
+    result = await get_application_by_company_and_role(
+        db=db, user_id=test_user.id, company_name="GOOGLE", role_title="swe intern"
     )
 
     assert result is not None
-    assert result.company_name == "Google"
+    assert result.company_name == "GOOGLE"
 
 
 @pytest.mark.asyncio
-async def test_get_application_by_company_name_no_match_returns_none(
+async def test_get_application_by_company_and_role_no_match_returns_none(
     db: AsyncSession, test_user: User
 ):
-    result = await get_application_by_company_name(
-        db=db, user_id=test_user.id, company_name="NonexistentCorp"
+    result = await get_application_by_company_and_role(
+        db=db, user_id=test_user.id, company_name="NonexistentCorp", role_title="Nonexistent Role"
     )
 
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_get_application_by_company_name_scoped_to_user(
+async def test_get_application_by_company_and_role_scoped_to_user(
     db: AsyncSession, test_user: User
 ):
     other_user = User(email="other@example.com", hashed_password="fake_hash")
@@ -344,8 +344,8 @@ async def test_get_application_by_company_name_scoped_to_user(
         db=db, user_id=other_user.id, company_name="Meta", role_title="Intern"
     )
 
-    result = await get_application_by_company_name(
-        db=db, user_id=test_user.id, company_name="Meta"
+    result = await get_application_by_company_and_role(
+        db=db, user_id=test_user.id, company_name="Meta", role_title="Intern"
     )
 
     assert result is None

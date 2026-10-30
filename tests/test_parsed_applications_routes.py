@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
+
 from app.services.gemini_service import (
     GeminiConfigurationError,
     GeminiInvalidResponseError,
@@ -26,10 +27,16 @@ FAKE_EXTRACTION_NEW_COMPANY = {
 
 
 @pytest.mark.asyncio
-async def test_parse_email_finds_existing_application(client: AsyncClient, auth_headers: dict):
+async def test_parse_email_finds_existing_application(
+    client: AsyncClient,
+    auth_headers: dict,
+):
     create_response = await client.post(
         "/applications",
-        json={"company_name": "Adobe", "role_title": "Intern"},
+        json={
+            "company_name": "Adobe",
+            "role_title": "Intern",
+        },
         headers=auth_headers,
     )
     application_id = create_response.json()["id"]
@@ -45,15 +52,20 @@ async def test_parse_email_finds_existing_application(client: AsyncClient, auth_
         )
 
     assert response.status_code == 200
+
     body = response.json()
+
     assert body["application_id"] == application_id
     assert body["is_new_application"] is False
+    assert body["company_name"] == "ADOBE"
+    assert body["role_title"] == "intern"
     assert body["suggested_status"] == "OA1"
 
 
 @pytest.mark.asyncio
 async def test_parse_email_no_match_returns_new_application_suggestion(
-    client: AsyncClient, auth_headers: dict
+    client: AsyncClient,
+    auth_headers: dict,
 ):
     with patch(
         "app.api.parsed_applications_routes.extract_email_details",
@@ -66,10 +78,13 @@ async def test_parse_email_no_match_returns_new_application_suggestion(
         )
 
     assert response.status_code == 200
+
     body = response.json()
+
     assert body["application_id"] is None
     assert body["is_new_application"] is True
-    assert body["company_name"] == "ColdEmailCorp"
+    assert body["company_name"] == "COLDEMAILCORP"
+    assert body["role_title"] == "backend intern"
     assert body["suggested_status"] == "INTERVIEW"
 
 
@@ -89,11 +104,15 @@ async def test_parse_email_requires_auth(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_confirm_parsed_application_updates_existing(
-    client: AsyncClient, auth_headers: dict
+    client: AsyncClient,
+    auth_headers: dict,
 ):
     create_response = await client.post(
         "/applications",
-        json={"company_name": "Stripe", "role_title": "Backend Intern"},
+        json={
+            "company_name": "Stripe",
+            "role_title": "Backend Intern",
+        },
         headers=auth_headers,
     )
     application_id = create_response.json()["id"]
@@ -112,13 +131,18 @@ async def test_confirm_parsed_application_updates_existing(
     )
 
     assert response.status_code == 200
+
     body = response.json()
+
     assert body["current_status"] == "OA1"
     assert body["deadline"] is not None
 
 
 @pytest.mark.asyncio
-async def test_confirm_parsed_application_creates_new(client: AsyncClient, auth_headers: dict):
+async def test_confirm_parsed_application_creates_new(
+    client: AsyncClient,
+    auth_headers: dict,
+):
     response = await client.post(
         "/confirm-parsed-application",
         json={
@@ -133,26 +157,79 @@ async def test_confirm_parsed_application_creates_new(client: AsyncClient, auth_
     )
 
     assert response.status_code == 200
+
     body = response.json()
+
+    assert body["id"] is not None
     assert body["current_status"] == "INTERVIEW"
-    assert body["company_name"] == "ColdEmailCorp"
+    assert body["company_name"] == "COLDEMAILCORP"
+    assert body["role_title"] == "backend intern"
+
+
+@pytest.mark.asyncio
+async def test_confirm_parsed_application_rejects_duplicate(
+    client: AsyncClient,
+    auth_headers: dict,
+):
+    await client.post(
+        "/applications",
+        json={
+            "company_name": "Google",
+            "role_title": "Software Engineer",
+        },
+        headers=auth_headers,
+    )
+
+    response = await client.post(
+        "/confirm-parsed-application",
+        json={
+            "application_id": None,
+            "company_name": "google",
+            "role_title": "SOFTWARE ENGINEER",
+            "suggested_status": "INTERVIEW",
+            "deadline": None,
+            "is_new_application": True,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_confirm_parsed_application_rejects_other_users_application(
-    client: AsyncClient, auth_headers: dict
+    client: AsyncClient,
+    auth_headers: dict,
 ):
     other_email = "other-parsed@example.com"
     other_password = "anotherpassword123"
-    await client.post("/auth/register", json={"email": other_email, "password": other_password})
-    other_login = await client.post(
-        "/auth/login", json={"email": other_email, "password": other_password}
+
+    await client.post(
+        "/auth/register",
+        json={
+            "email": other_email,
+            "password": other_password,
+        },
     )
-    other_headers = {"Authorization": f"Bearer {other_login.json()['access_token']}"}
+
+    other_login = await client.post(
+        "/auth/login",
+        json={
+            "email": other_email,
+            "password": other_password,
+        },
+    )
+
+    other_headers = {
+        "Authorization": f"Bearer {other_login.json()['access_token']}"
+    }
 
     create_response = await client.post(
         "/applications",
-        json={"company_name": "Netflix", "role_title": "Intern"},
+        json={
+            "company_name": "Netflix",
+            "role_title": "Intern",
+        },
         headers=other_headers,
     )
     application_id = create_response.json()["id"]
@@ -175,11 +252,15 @@ async def test_confirm_parsed_application_rejects_other_users_application(
 
 @pytest.mark.asyncio
 async def test_confirm_parsed_application_invalid_transition_returns_400(
-    client: AsyncClient, auth_headers: dict
+    client: AsyncClient,
+    auth_headers: dict,
 ):
     create_response = await client.post(
         "/applications",
-        json={"company_name": "Adobe", "role_title": "Intern"},
+        json={
+            "company_name": "Adobe",
+            "role_title": "Intern",
+        },
         headers=auth_headers,
     )
     application_id = create_response.json()["id"]
@@ -198,8 +279,10 @@ async def test_confirm_parsed_application_invalid_transition_returns_400(
     )
 
     assert response.status_code == 400
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("error_type", "expected_status"),
     [
         (GeminiTimeoutError, 504),
@@ -207,23 +290,23 @@ async def test_confirm_parsed_application_invalid_transition_returns_400(
         (GeminiConfigurationError, 503),
         (GeminiInvalidResponseError, 502),
     ],
-    )
-    async def test_parse_email_returns_controlled_provider_error(
+)
+async def test_parse_email_returns_controlled_provider_error(
     client: AsyncClient,
     auth_headers: dict,
     error_type,
-    expected_status,
-    ):
-        with patch(
+    expected_status: int,
+):
+    with patch(
         "app.api.parsed_applications_routes.extract_email_details",
         side_effect=error_type(),
-        ):
-            response = await client.post(
+    ):
+        response = await client.post(
             "/parse-email",
             json={"raw_text": "Synthetic test email"},
             headers=auth_headers,
         )
 
-        assert response.status_code == expected_status
-        assert response.json()["detail"] == error_type.public_detail
-        assert "API key denied" not in response.text
+    assert response.status_code == expected_status
+    assert response.json()["detail"] == error_type.public_detail
+    assert "API key denied" not in response.text
