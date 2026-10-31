@@ -13,10 +13,7 @@ A multi user REST API that replaces spreadsheet tracking for internship applicat
  
 | Service | Link |
 |---|---|
-| Frontend (Vercel) | [Add Vercel URL here](https://your-app.vercel.app) |
-| API (Render) | [Add Render URL here](https://your-api.onrender.com) |
-| API Docs (Swagger UI) | [Add Render URL here, ending in /docs](https://your-api.onrender.com/docs) |
-| Database (Supabase) | [Add Supabase project link here](https://supabase.com/dashboard/project/your-project-id) |
+| API Docs (Swagger UI) | https://internship-tracker-api-ktxt.onrender.com/docs |
 
 ## Overview
 
@@ -74,6 +71,17 @@ Analytics are computed on demand by the API. The endpoint does not depend on a s
 - Deliver email through Brevo.
 - Run the production reminder scanner on a GitHub Actions schedule.
 
+## Deployment
+ 
+| Component | Platform |
+|---|---|
+| Backend API | [Render](https://render.com/) |
+| Database | [Supabase PostgreSQL](https://supabase.com/) |
+| Redis | [Upstash](https://upstash.com/) |
+| Scheduled Jobs | GitHub Actions |
+| Email Delivery | [Brevo](https://www.brevo.com/) |
+| AI Extraction | Google Gemini |
+
 ## Tech Stack
  
 | Area | Technology |
@@ -84,8 +92,7 @@ Analytics are computed on demand by the API. The endpoint does not depend on a s
 | Auth and token state | JWT, bcrypt, Redis |
 | AI extraction | Google Gemini API (structured JSON output) |
 | Email | Brevo API |
-| Background jobs | GitHub Actions cron (production), Celery with Beat (local) |
-| Frontend | Vanilla HTML and JavaScript |
+| Background jobs | GitHub Actions cron (production), Celery with Beat (local) |    
 | Testing | pytest, pytest asyncio, httpx |
 | Infrastructure | Docker Compose, GitHub Actions, Render, Vercel, Supabase |
 
@@ -331,8 +338,8 @@ PostgreSQL and Redis must be available locally or through managed services.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-username>/<repository-name>.git
-cd <repository-name>
+git clone https://github.com/ShubhThadani17/Internship_Application_Tracker.git
+cd Internship_Application_Tracker
 ```
 
 Replace the URL and directory name with your repository details.
@@ -484,17 +491,3 @@ The application can be hosted on a platform that supports a Python web service, 
 ### GitHub Actions secrets
 
 Configure the repository secrets required by `.github/workflows/deadline-reminders.yml`. At minimum, the scheduled runner needs access to the production database and Brevo sender credentials. Add any additional settings that `app/core/config.py` validates at startup.
-
-Do not put production secrets directly in workflow YAML or commit them to the repository.
-
-## Deployment
- 
-| Component | Platform |
-|---|---|
-| Frontend | Vercel |
-| API (FastAPI with Uvicorn) | Render |
-| PostgreSQL | Supabase |
-| Redis | Managed Redis instance for refresh token state |
-| Reminders | GitHub Actions workflow (`.github/workflows/deadline-reminders.yml`) every 30 minutes, with secrets stored in repository settings |
- 
-Apply Alembic migrations to the production database before routing traffic to a new version.
